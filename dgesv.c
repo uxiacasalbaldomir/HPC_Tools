@@ -1,7 +1,9 @@
-#include <time.h>
+##include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <omp.h>
 #include "mkl_lapacke.h"
+
 
 double *generate_matrix(int size)
 {
@@ -43,67 +45,68 @@ int check_result(double *bref, double *b, int size) {
 }
 
 double *my_dgesv(int n, int nrhs, double *A, double *B) {
-	
-	double *L = (double*)calloc(n * n, sizeof(double));
+  
+  double *L = (double*)calloc(n * n, sizeof(double));
     double *U = (double*)calloc(n * n, sizeof(double));
-	double *Y = (double*)calloc(n * nrhs, sizeof(double));
+  double *Y = (double*)calloc(n * nrhs, sizeof(double));
     double *X = (double*)calloc(n * nrhs, sizeof(double));
 
-	if ((U==NULL) || (L==NULL) || (Y==NULL)){
-		exit(EXIT_FAILURE);
-	}
-	int i, j, k;
-	
-	for (j = 0; j < n; j++){
-      for (i = 0; i <n; i++) {
-          if(i<=j){
-              U[i*n+j]=A[i*n+j];
-              for(k=0;k<=(i-1);k++){
-                  U[i*n+j]-=L[i*n+k]*U[k*n+j];
-              }
-              if (i==j)
-                  L[i*n+j]=1;
-              else
-                  L[i*n+j]=0;
-          }
-          else{
-              L[i*n+j]=A[i*n+j];
-              for(k=0; k<=j-1; k++)
-                  L[i*n+j]-=L[i*n+k]*U[k*n+j];
-              L[i*n+j]/=U[j*n+j];
-              U[i*n+j]=0;
-          }
-      }
+  if ((U==NULL) || (L==NULL) || (Y==NULL) || (X==NULL)){
+    exit(EXIT_FAILURE);
   }
+  int i, j, k;
+
+    #pragma omp parallel private(i,j,k)
+    {
+        #pragma omp for 
+        for (i = 0; i <n; i++) {
+            for (j = 0; j < n; j++){
+             if(i<=j){
+                 U[i*n+j]=A[i*n+j];
+                  for(k=0;k<=(i-1);k++){
+                    U[i*n+j]-=L[i*n+k]*U[k*n+j];
+                  }
+                  if (i==j)
+                      L[i*n+j]=1;
+                 else
+                     L[i*n+j]=0;
+              }else{
+                L[i*n+j]=A[i*n+j];
+                  for(k=0; k<=j-1; k++)
+                      L[i*n+j]-=L[i*n+k]*U[k*n+j];
+                 L[i*n+j]/=U[j*n+j];
+                 U[i*n+j]=0;
+             }
+            }
+        }
    
-	double sum;
-	//LY = B
-	for (k=0; k<n;k++){
-		for(i=0;i<nrhs;i++){
-			Y[i*nrhs + k] = B[i*nrhs + k];
-			sum = 0;
-			for (j=0; j<i;j++){
-				sum += L[i*n + j]*Y[j*nrhs + k]; // L[1][0]* X[0][0] + L[]
-			}
-			Y[i*n+ k] = Y[i*n + k] - sum;
-		}
-	}
-	  
-	//Ux = Y	
-	for (k = 0 ; k< nrhs; k++){
-		for(i=(n-1); i>=0; i--){
-			X[i * nrhs + k ]= Y[i * nrhs +k];
-			sum = 0;
-			for(j=i+1; j<n; j++){
-				sum += U[i*n+j]*X[k*nrhs + j];
-			}
-			X[i * nrhs + k]= (X[i * nrhs + k] - sum)/U[i*n+i];
-		}
-	}
-	free(L);
-	free(U);
-	free(Y);
-	return X;
+    //LY = B  
+        #pragma omp for 
+    for (k=0; k<n;k++){
+            for(i=0;i<nrhs;i++){
+        Y[i*nrhs + k] = B[i*nrhs + k];
+        for (j=0; j<i;j++){
+          Y[i*nrhs+ k] -= L[i*n + j]*Y[j*nrhs + k]; //
+        }
+      }
+    }
+    
+  //Ux = Y
+        #pragma omp for
+        for (k = 0 ; k< nrhs; k++){
+            for(i=(n-1); i>=0; i--){
+                X[i * nrhs + k ]= Y[i * nrhs +k];
+        for(j=i+1; j<n; j++)
+                 X[i*n+k]-=U[i*n+j]*X[j*n+k];
+        X[i*n+k]/=U[i*n+i];
+      }
+        }
+  }
+
+  free(L);
+  free(U);
+  free(Y);
+  return X;
 }
 
 
@@ -119,7 +122,6 @@ double *my_dgesv(int n, int nrhs, double *A, double *B) {
         aref = generate_matrix(size);        
         b = generate_matrix(size);
         bref = generate_matrix(size);
-        
 
         //print_matrix("A", a, size);
         //print_matrix("B", b, size);
@@ -132,15 +134,21 @@ double *my_dgesv(int n, int nrhs, double *A, double *B) {
         info = LAPACKE_dgesv(LAPACK_ROW_MAJOR, n, nrhs, aref, lda, ipiv, bref, ldb);
         printf("Time taken by MKL: %.2fs\n", (double)(clock() - tStart) / CLOCKS_PER_SEC);
 
-        tStart = clock();    
+        double start = omp_get_wtime();   
         double *res =my_dgesv(n, nrhs, a, b);
-        printf("Time taken by my implementation: %.2fs\n", (double)(clock() - tStart) / CLOCKS_PER_SEC);
+        printf("Time taken by my implementation: %.2fs\n", (omp_get_wtime()-start));
         
         if (check_result(bref,res,size)==1)
             printf("Result is ok!\n");
         else    
             printf("Result is wrong!\n");
         
-        print_matrix("X", bref, size);
-        print_matrix("Xref", res, size);
+        //print_matrix("X", bref, size);
+        //print_matrix("Xref", res, size);
+        free(res);
+        free(bref);
+        free(b);
+        free(aref);
+        free(a);
+        free(ipiv);
     }
