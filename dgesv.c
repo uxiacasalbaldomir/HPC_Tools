@@ -1,4 +1,4 @@
-##include <time.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <omp.h>
@@ -45,68 +45,72 @@ int check_result(double *bref, double *b, int size) {
 }
 
 double *my_dgesv(int n, int nrhs, double *A, double *B) {
-  
-  double *L = (double*)calloc(n * n, sizeof(double));
+	
+	double *L = (double*)calloc(n * n, sizeof(double));
     double *U = (double*)calloc(n * n, sizeof(double));
-  double *Y = (double*)calloc(n * nrhs, sizeof(double));
+	double *Y = (double*)calloc(n * nrhs, sizeof(double));
     double *X = (double*)calloc(n * nrhs, sizeof(double));
 
-  if ((U==NULL) || (L==NULL) || (Y==NULL) || (X==NULL)){
-    exit(EXIT_FAILURE);
-  }
-  int i, j, k;
+    double res;
+
+	if ((U==NULL) || (L==NULL) || (Y==NULL) || (X==NULL)){
+		exit(EXIT_FAILURE);
+	}
+	int i, j, k;
 
     #pragma omp parallel private(i,j,k)
     {
-        #pragma omp for 
+        #pragma omp for reduction(-:res)
         for (i = 0; i <n; i++) {
             for (j = 0; j < n; j++){
-             if(i<=j){
-                 U[i*n+j]=A[i*n+j];
-                  for(k=0;k<=(i-1);k++){
-                    U[i*n+j]-=L[i*n+k]*U[k*n+j];
-                  }
-                  if (i==j)
-                      L[i*n+j]=1;
-                 else
-                     L[i*n+j]=0;
-              }else{
-                L[i*n+j]=A[i*n+j];
-                  for(k=0; k<=j-1; k++)
-                      L[i*n+j]-=L[i*n+k]*U[k*n+j];
-                 L[i*n+j]/=U[j*n+j];
-                 U[i*n+j]=0;
-             }
+        	   if(i<=j){
+            	   res=A[i*n+j];
+                	for(k=0;k<=(i-1);k++){
+                		res-=L[i*n+k]*U[k*n+j];
+                 	}
+                 	U[i*n+j] = res;
+                	if (i==j)
+                   		L[i*n+j]=1;
+           		   else
+               		   L[i*n+j]=0;
+            	}else{
+            		res=A[i*n+j];
+           	    	for(k=0; k<=j-1; k++)
+               	    	res-=L[i*n+k]*U[k*n+j];
+           		   L[i*n+j]=res/U[j*n+j];
+           		   U[i*n+j]=0;
+        	   }
             }
         }
    
-    //LY = B  
-        #pragma omp for 
-    for (k=0; k<n;k++){
+		//LY = B  
+        #pragma omp for reduction(-:res)
+		for (k=0; k<n;k++){
             for(i=0;i<nrhs;i++){
-        Y[i*nrhs + k] = B[i*nrhs + k];
-        for (j=0; j<i;j++){
-          Y[i*nrhs+ k] -= L[i*n + j]*Y[j*nrhs + k]; //
-        }
-      }
-    }
-    
-  //Ux = Y
-        #pragma omp for
+				res = B[i*nrhs + k];
+				for (j=0; j<i;j++){
+					res -= L[i*n + j]*Y[j*nrhs + k]; //
+				}
+				Y[i*nrhs + k] = res;
+			}
+		}
+		
+	//Ux = Y
+        #pragma omp for reduction(-:res)
         for (k = 0 ; k< nrhs; k++){
             for(i=(n-1); i>=0; i--){
-                X[i * nrhs + k ]= Y[i * nrhs +k];
-        for(j=i+1; j<n; j++)
-                 X[i*n+k]-=U[i*n+j]*X[j*n+k];
-        X[i*n+k]/=U[i*n+i];
-      }
+                res= Y[i * nrhs +k];
+				for(j=i+1; j<n; j++)
+	               res-=U[i*n+j]*X[j*n+k];
+				X[i*n+k]=res/U[i*n+i];
+			}
         }
-  }
+	}
 
-  free(L);
-  free(U);
-  free(Y);
-  return X;
+	free(L);
+	free(U);
+	free(Y);
+	return X;
 }
 
 
